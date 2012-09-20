@@ -3,7 +3,6 @@
 import sys
 import os
 import re
-import time
 from optparse import OptionParser
 from urllib import urlopen
 from xml.dom.minidom import parse
