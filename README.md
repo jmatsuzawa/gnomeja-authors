@@ -1,4 +1,0 @@
-gnomeja-authors
-===============
-
-gnomeja-authors
