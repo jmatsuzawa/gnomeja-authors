@@ -1,0 +1,143 @@
+#!/usr/bin/env python
+
+import sys
+import os
+import re
+import time
+from optparse import OptionParser
+from urllib import urlopen
+from xml.dom.minidom import parse
+from git import Repo
+
+RELEASE_SET = 'gnome-3-6'
+LAST_RELEASE_DATE = '2012/03/28'
+
+class NoRepositoryError(Exception): pass
+
+def ui_paths(elem, name):
+    paths = []
+    domains = elem.getElementsByTagName('domain')
+    for domain in domains:
+        repos = domain.getElementsByTagName('svnpath')
+        for repo in repos:
+            pattern = '^.*/'+name.replace('+',r'\+')+'/(.*)'
+            replacement = r'\1/ja.po'
+            path = re.sub(pattern, replacement, repo.firstChild.data)
+            paths.append(path);
+    return paths
+
+def help_paths(elem, name):
+    paths = []
+    documents = elem.getElementsByTagName('document')
+    for document in documents:
+        repos = document.getElementsByTagName('svnpath')
+        for repo in repos:
+            pattern = '^.*/'+name.replace('+',r'\+')+'/(.*)'
+            replacement = r'\1/ja/ja.po'
+            path = re.sub(pattern, replacement, repo.firstChild.data)
+            paths.append(path);
+    return paths
+
+def modules_info():
+    url = 'http://l10n.gnome.org/languages/ja/'+RELEASE_SET+'/xml'
+    releasexml = urlopen(url)
+    document = parse(releasexml)
+    modules = []
+    module_elems = document.getElementsByTagName('module')
+    for elem in module_elems:
+        name = elem.getAttribute('id')
+        branch = elem.getAttribute('branch')
+        uis = ui_paths(elem, name)
+        helps = help_paths(elem, name)
+        module = {'name':name, 'branch':branch, 'paths':uis+helps}
+        modules.append(module)
+
+    return modules
+
+def authors(module):
+    name = module['name']
+    branch = module['branch']
+    paths = module['paths']
+
+    repopath = os.path.join(checkoutdir, name)
+    if not os.path.isdir(repopath):
+        if name == 'PolicyKit-gnome':
+            jhbuildpath = os.path.join(checkoutdir, 'polkit-gnome')
+            if os.path.isdir(jhbuildpath):
+                repopath = jhbuildpath
+            else:
+                raise NoRepositoryError
+        else:
+            raise NoRepositoryError
+    
+    repo = Repo(repopath)
+    git = repo.git
+    git.fetch('origin')
+    authorlog = git.log('origin/master', '--', paths,
+                        pretty = '%an',
+                        committer = r'\('+\
+                                r'[Kk][Uu][Ss][Aa][Nn][Oo]'+\
+                                r'\|'+\
+                                r'[Aa][Kk][Aa][Hh][Oo][Ss][Hh][Ii]'+\
+                                r'\|'+\
+                                r'[Mm][Aa][Tt][Ss][Uu][Zz][Aa][Ww][Aa]'+\
+                                r'\)',
+                        since = LAST_RELEASE_DATE)
+    authors = set(authorlog.split('\n'))
+    return authors
+
+
+def main(checkoutdir, mode):
+    modules = modules_info()
+    norepositories = []
+    for module in modules:
+        try:
+            module['authors'] = authors(module)
+        except NoRepositoryError:
+            norepositories.append(module['name'])
+    if norepositories:
+        print('ERROR: Repositories of the following modules are not found. Clone them.')
+        for repo in norepositories:
+            print(repo)
+        sys.exit(1)
+
+    if mode == 'modules':
+        for module in  modules:
+            print('['+module['name']+']')
+            for author in module['authors']:
+                print(author)
+    else:
+        all_authors = set()
+        for module in modules:
+            all_authors |= module['authors']
+        all_authors.discard('')
+        for author in all_authors:
+            print(author)
+
+
+if __name__ == '__main__':
+    parser = OptionParser()
+    parser.add_option('-d', '--directory',
+                      action = 'store',
+                      type = 'string',
+                      dest = 'checkoutdir',
+                      help = 'checkout directory. default is PWD')
+    parser.add_option('-m', '--modules',
+                      action = 'store_true',
+                      dest = 'modules',
+                      default = False,
+                      help = 'authors by modules')
+    (options, args) = parser.parse_args()
+
+    if not options.checkoutdir:
+        checkoutdir = '.'
+    else:
+        checkoutdir = options.checkoutdir
+    checkoutdir = os.path.abspath(checkoutdir)
+
+    if options.modules:
+        mode = 'modules'
+    else:
+        mode = 'all'
+
+    main(checkoutdir, mode)
